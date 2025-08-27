@@ -1,0 +1,2 @@
+// Ye entry point hai
+require('./dist/index.js');
