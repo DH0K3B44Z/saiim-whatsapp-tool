@@ -1,10 +1,8 @@
-# Node modules
+# Dependencies
 node_modules/
 
-# WhatsApp auth/session data
+# WhatsApp session & approvals (very sensitive)
 data/auth_info/
-
-# Local approvals and group choices
 data/approvals.json
 data/group_choice.json
 
