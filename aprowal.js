@@ -1,39 +1,61 @@
 const baileys = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const qrcode = require('qrcode-terminal');
-const fs = require('fs');
-const readline = require('readline');
 const chalk = require('chalk');
+const fs = require('fs');
 
 const { makeWASocket, useMultiFileAuthState, DisconnectReason, makeCacheableSignalKeyStore } = baileys;
 
-const OWNER_JID_NUM = '919557954851';
-const OWNER_JID = `${OWNER_JID_NUM}@s.whatsapp.net`;
 const AUTH_DIR = './auth_info';
-const DATA_DIR = './data';
-const APPROVAL_FILE = `${DATA_DIR}/approval.json`;
-const GROUP_CHOICE_FILE = `${DATA_DIR}/group_choice.json`;
-const REPORT_INTERVAL_MS = 2 * 60 * 60 * 1000; // 2 hours
 
-if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR);
+async function start() {
+  const { state, saveCreds, cache } = await useMultiFileAuthState(AUTH_DIR);
 
-function loadData(file) {
-  if (fs.existsSync(file)) return JSON.parse(fs.readFileSync(file));
-  return null;
-}
-function saveData(file, data) {
-  fs.writeFileSync(file, JSON.stringify(data, null, 2));
+  const sock = makeWASocket({
+    logger: pino({ level: 'silent' }),
+    auth: {
+      creds: state.creds,
+      keys: makeCacheableSignalKeyStore(state.keys, pino({ level: 'fatal' }), cache),
+    },
+    printQRInTerminal: false, // pairing code use करते हुए false रखें
+  });
+
+  sock.ev.on('creds.update', saveCreds);
+
+  sock.ev.on('connection.update', async ({ connection, lastDisconnect, qr }) => {
+    if (qr) {
+      console.log(chalk.yellow('Scan QR code in WhatsApp:'));
+      qrcode.generate(qr, { small: true });
+    }
+
+    if (connection === 'close') {
+      const reason = lastDisconnect?.error?.output?.statusCode;
+      console.log(chalk.red('Connection closed:'), reason);
+      if (reason !== DisconnectReason.loggedOut) {
+        console.log(chalk.yellow('Reconnecting in 3 seconds...'));
+        await new Promise(res => setTimeout(res, 3000));
+        start();
+      } else {
+        console.log(chalk.red('Logged out. Delete auth info/folder to reconnect.'));
+        process.exit(0);
+      }
+    }
+
+    if (connection === 'open') {
+      console.log(chalk.green('Connected to WhatsApp!'));
+    }
+  });
+
+  // अगर पहली बार रजिस्टर नहीं, तो नंबर देकर pairing code मंगाये
+  if (!state.creds.registered) {
+    const phoneNumber = '919123456789'; // अपना नंबर E.164 फॉर्मेट में डालें (देश कोड + नंबर, बिना +)
+    const pairingCode = await sock.requestPairingCode(phoneNumber);
+    console.log(chalk.cyan('Pairing code:'), pairingCode);
+    console.log(chalk.cyan('Use this code in your WhatsApp to complete pairing.'));
+  }
 }
 
-function saveApproval(id) {
-  saveData(APPROVAL_FILE, { id });
-}
-function getApproval() {
-  const d = loadData(APPROVAL_FILE);
-  return d ? d.id : null;
-}
-
-function clearApproval() {
+start().catch(console.error);
   if (fs.existsSync(APPROVAL_FILE)) fs.unlinkSync(APPROVAL_FILE);
 }
 
